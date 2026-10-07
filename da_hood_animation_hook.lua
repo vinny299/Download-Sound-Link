@@ -1,80 +1,46 @@
--- Da Hood animation hook (client-side)
--- 1) set ANIM_ID  2) run in executor  3) read the console (F9)
--- Note: the animation must be owned by you or the game, otherwise Roblox cannot load it (Length stays 0)
-
+-- Da Hood animation hook (compact). Set ANIM_ID, run, read console (F9).
+-- Animation must be owned by you or the game, else Length stays 0.
 local ANIM_ID = "rbxassetid://0"
-local SPEED, LOOPED = 1, true
+local lp = game:GetService("Players").LocalPlayer
+if getgenv().DH_STOP then pcall(getgenv().DH_STOP) end
+local on, mine, track, cur = true, setmetatable({}, {__mode = "k"}), nil, nil
 
-if getgenv().DH_ANIM_CLEANUP then pcall(getgenv().DH_ANIM_CLEANUP) end
-
-local Players    = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local LogService = game:GetService("LogService")
-local lp = Players.LocalPlayer
-
-local mine, conns, alive = setmetatable({}, {__mode = "k"}), {}, true
-local animator, track
-
--- block the game from stopping/destroying our track
 local old
 old = hookmetamethod(game, "__namecall", function(self, ...)
     local m = getnamecallmethod()
-    if alive and not checkcaller() and mine[self] then
-        if m == "Stop" or m == "Destroy" or m == "AdjustWeight" then
-            warn("[HOOK] blocked", m, "on our track")
-            return nil
-        end
+    if on and mine[self] and not checkcaller() and (m == "Stop" or m == "Destroy" or m == "AdjustWeight") then
+        return nil
     end
     return old(self, ...)
 end)
 
--- engine errors about animations
-conns[#conns + 1] = LogService.MessageOut:Connect(function(msg)
-    if msg:lower():find("animation") then warn("[ENGINE]", msg) end
-end)
-
-local function load(char)
-    local hum = char:WaitForChild("Humanoid", 10)
-    if not hum then return end
-    animator = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5)
-    if not animator then warn("[ANIM] Animator not found") return end
-
+local function load()
+    local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+    local an = hum and hum:FindFirstChildOfClass("Animator")
+    if not an then return end
     local a = Instance.new("Animation")
     a.AnimationId = ANIM_ID
-    local ok, tr = pcall(function() return animator:LoadAnimation(a) end)
-    if not ok or not tr then warn("[ANIM] LoadAnimation fail:", tr) return end
-
-    local t0 = os.clock()
-    while tr.Length == 0 and os.clock() - t0 < 3 do task.wait() end
-    if tr.Length == 0 then
-        warn("[ANIM] load failed (Length=0): ID is not owned by you/the game, or is wrong")
-    end
-
+    local ok, tr = pcall(function() return an:LoadAnimation(a) end)
+    if not ok then warn("[ANIM] LoadAnimation failed:", tr) return end
     mine[tr] = true
-    tr.Priority, tr.Looped = Enum.AnimationPriority.Action4, LOOPED
+    tr.Priority = Enum.AnimationPriority.Action4
+    tr.Looped = true
     tr:Play()
-    tr:AdjustSpeed(SPEED)
-    track = tr
+    track, cur = tr, an
+    task.delay(3, function() if tr.Length == 0 then warn("[ANIM] Length=0: bad or not-owned ID") end end)
 end
 
--- watchdog: track stopped / Animator removed or replaced -> replay
-conns[#conns + 1] = RunService.Heartbeat:Connect(function()
-    local char = lp.Character
-    if not (alive and char) then return end
-    if animator and not animator:IsDescendantOf(char) then
-        track, animator = nil, nil
-        task.spawn(load, char)
-    elseif track and not track.IsPlaying then
-        track:Play()
-        track:AdjustSpeed(SPEED)
+task.spawn(function()
+    while on do
+        local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+        local an = hum and hum:FindFirstChildOfClass("Animator")
+        if an and (not track or cur ~= an) then
+            load()
+        elseif track and not track.IsPlaying then
+            track:Play()
+        end
+        task.wait(0.2)
     end
 end)
 
-conns[#conns + 1] = lp.CharacterAdded:Connect(function(c) track, animator = nil, nil task.spawn(load, c) end)
-if lp.Character then task.spawn(load, lp.Character) end
-
-getgenv().DH_ANIM_CLEANUP = function()
-    alive = false
-    for _, c in ipairs(conns) do c:Disconnect() end
-    if track then mine[track] = nil pcall(function() track:Stop() end) end
-end
+getgenv().DH_STOP = function() on = false if track then mine[track] = nil pcall(function() track:Stop() end) end end
