@@ -1,6 +1,6 @@
 -- Da Hood animation hook (client-side)
--- 1) ใส่ ANIM_ID  2) รันใน executor  3) ดู log ใน console (F9)
--- หมายเหตุ: animation ต้องเป็นของเรา/เจ้าของเกมเท่านั้น ไม่งั้น Roblox โหลดไม่ได้ (Length จะเป็น 0)
+-- 1) set ANIM_ID  2) run in executor  3) read the console (F9)
+-- Note: the animation must be owned by you or the game, otherwise Roblox cannot load it (Length stays 0)
 
 local ANIM_ID = "rbxassetid://0"
 local SPEED, LOOPED = 1, true
@@ -15,7 +15,7 @@ local lp = Players.LocalPlayer
 local mine, conns, alive = setmetatable({}, {__mode = "k"}), {}, true
 local animator, track
 
--- กันเกมสั่ง Stop/Destroy/ปรับ weight ของ track เรา
+-- block the game from stopping/destroying our track
 local old
 old = hookmetamethod(game, "__namecall", function(self, ...)
     local m = getnamecallmethod()
@@ -28,7 +28,7 @@ old = hookmetamethod(game, "__namecall", function(self, ...)
     return old(self, ...)
 end)
 
--- error ของ engine เกี่ยวกับ animation
+-- engine errors about animations
 conns[#conns + 1] = LogService.MessageOut:Connect(function(msg)
     if msg:lower():find("animation") then warn("[ENGINE]", msg) end
 end)
@@ -37,7 +37,7 @@ local function load(char)
     local hum = char:WaitForChild("Humanoid", 10)
     if not hum then return end
     animator = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5)
-    if not animator then warn("[ANIM] ไม่เจอ Animator") return end
+    if not animator then warn("[ANIM] Animator not found") return end
 
     local a = Instance.new("Animation")
     a.AnimationId = ANIM_ID
@@ -47,7 +47,7 @@ local function load(char)
     local t0 = os.clock()
     while tr.Length == 0 and os.clock() - t0 < 3 do task.wait() end
     if tr.Length == 0 then
-        warn("[ANIM] โหลดไม่สำเร็จ (Length=0) -> ID นี้ไม่ใช่ของเรา/เจ้าของเกม หรือ ID ผิด")
+        warn("[ANIM] load failed (Length=0): ID is not owned by you/the game, or is wrong")
     end
 
     mine[tr] = true
@@ -57,7 +57,7 @@ local function load(char)
     track = tr
 end
 
--- เฝ้า: track หยุด / Animator ถูกลบหรือแทนที่ -> เล่นใหม่
+-- watchdog: track stopped / Animator removed or replaced -> replay
 conns[#conns + 1] = RunService.Heartbeat:Connect(function()
     local char = lp.Character
     if not (alive and char) then return end
