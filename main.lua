@@ -837,7 +837,6 @@ end)
 
 local current_target
 local aim_active = false
-local auto_shoot_active = false
 local shot_tracers = {}
 
 local aim_shot = LPH_NO_VIRTUALIZE(function(camera_pos, muzzle, buried)
@@ -1201,7 +1200,7 @@ end)
 local last_auto_shot, last_auto_reload = 0, 0
 
 local update_auto_shoot = LPH_NO_VIRTUALIZE(function()
-    if not auto_shoot_active or not fire_fn or not (aim_active or ragebot.active) or Library.Toggled then
+    if not config.auto_shoot or not fire_fn or not (aim_active or ragebot.active) or Library.Toggled then
         return
     end
     local target = current_target
@@ -2241,7 +2240,6 @@ Library:GiveSignal(RunService.RenderStepped:Connect(LPH_NO_VIRTUALIZE(function()
 
     search_budget = 1
     aim_active = key_active(config.enabled, Options.SilentAimKey)
-    auto_shoot_active = key_active(config.auto_shoot, Options.AutoShootKey)
     ug_key_active = key_active(config.underground, Options.UndergroundKey)
     ragebot.active = key_active(config.rage.enabled, Options.RagebotKey)
     if not ragebot.active then
@@ -3242,11 +3240,6 @@ local function build_menu()
     AutoShootGroup:AddToggle("AutoShoot", {
         Text = "Auto Shoot",
         Default = false,
-    }):AddKeyPicker("AutoShootKey", {
-        Default = "None",
-        Mode = "Toggle",
-        Modes = {"Toggle", "Hold", "Always"},
-        Text = "Auto Shoot",
     })
     AutoShootGroup:AddToggle("AutoReload", {
         Text = "Auto Reload",
@@ -3785,11 +3778,6 @@ local function build_menu()
     bind("NoRecoil", function(value) config.no_recoil = value end)
     bind("AutoGun", function(value) config.auto_gun = value end)
     bind("AutoShoot", function(value) config.auto_shoot = value end)
-    Options.AutoShootKey:OnClick(function(toggled)
-        if Options.AutoShootKey.Mode == "Toggle" then
-            Toggles.AutoShoot:SetValue(toggled)
-        end
-    end)
     bind("AutoReload", function(value) config.auto_reload = value end)
 
     local rage = config.rage
