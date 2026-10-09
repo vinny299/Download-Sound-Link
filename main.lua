@@ -135,6 +135,37 @@ local config = {
         team_color = Color3.fromRGB(80, 255, 120),
         target_color = Color3.fromRGB(255, 60, 60),
     },
+
+    world = {
+        time = false,
+        time_value = 4.5,
+        lighting = false,
+        ambient = false,
+        saturation = false,
+        saturation_value = 0,
+        contrast = false,
+        contrast_value = 0,
+        tint = false,
+        tint_color = Color3.fromRGB(255, 255, 255),
+        textures = false,
+        texture_pack = "Minecraft",
+        skybox = false,
+        skybox_value = "Black Storm",
+        atmosphere = false,
+        atmosphere_color = Color3.fromRGB(255, 255, 255),
+        atmosphere_decay = Color3.fromRGB(120, 120, 120),
+        atmosphere_density = 0.35,
+        atmosphere_offset = 0,
+        atmosphere_haze = 1,
+        atmosphere_glare = 10,
+        weather = false,
+        weather_type = "Rain",
+        weather_color = Color3.fromRGB(255, 255, 255),
+        weather_rate = 100,
+        noise = false,
+        noise_sound = "Night",
+        noise_volume = 25,
+    },
 }
 getgenv().WarzSilent = config
 
@@ -2091,6 +2122,589 @@ Library:GiveSignal(RunService.RenderStepped:Connect(LPH_NO_VIRTUALIZE(function()
     end
 end)))
 
+local function setup_world(world)
+    local Lighting = game:GetService("Lighting")
+    local MaterialService = game:GetService("MaterialService")
+    local SoundService = game:GetService("SoundService")
+
+    local WORLD_STEP = "warz_world"
+    local WHITE = Color3.new(1, 1, 1)
+    local TEXTURE_WHITE = Color3.fromRGB(254, 253, 255)
+    local WEATHER_SIZE, WEATHER_OFFSET = Vector3.new(40, 40, 85), Vector3.new(0, 20, 0)
+    local LIGHTING_PROPS = {"ClockTime", "Technology", "Ambient", "OutdoorAmbient"}
+    local SKY_FACES = {"SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp"}
+    local SKIP_FOLDERS = {WarzLoot = true, WarzFx = true, WarzDummies = true}
+
+    local SKYBOX_NAMES = {"Black Storm", "Blue Space", "Realistic", "Stormy", "Pink"}
+    local SKYBOXES = {
+        ["Black Storm"] = {
+            SkyboxBk = "rbxassetid://15502511288", SkyboxDn = "rbxassetid://15502508460", SkyboxFt = "rbxassetid://15502510289",
+            SkyboxLf = "rbxassetid://15502507918", SkyboxRt = "rbxassetid://15502509398", SkyboxUp = "rbxassetid://15502511911",
+        },
+        ["Blue Space"] = {
+            SkyboxBk = "rbxassetid://15536110634", SkyboxDn = "rbxassetid://15536112543", SkyboxFt = "rbxassetid://15536116141",
+            SkyboxLf = "rbxassetid://15536114370", SkyboxRt = "rbxassetid://15536118762", SkyboxUp = "rbxassetid://15536117282",
+        },
+        Realistic = {
+            SkyboxBk = "rbxassetid://653719502", SkyboxDn = "rbxassetid://653718790", SkyboxFt = "rbxassetid://653719067",
+            SkyboxLf = "rbxassetid://653719190", SkyboxRt = "rbxassetid://653718931", SkyboxUp = "rbxassetid://653719321",
+        },
+        Stormy = {
+            SkyboxBk = "http://www.roblox.com/asset/?id=18703245834", SkyboxDn = "http://www.roblox.com/asset/?id=18703243349",
+            SkyboxFt = "http://www.roblox.com/asset/?id=18703240532", SkyboxLf = "http://www.roblox.com/asset/?id=18703237556",
+            SkyboxRt = "http://www.roblox.com/asset/?id=18703235430", SkyboxUp = "http://www.roblox.com/asset/?id=18703232671",
+        },
+        Pink = {
+            SkyboxBk = "rbxassetid://12216109205", SkyboxDn = "rbxassetid://12216109875", SkyboxFt = "rbxassetid://12216109489",
+            SkyboxLf = "rbxassetid://12216110170", SkyboxRt = "rbxassetid://12216110471", SkyboxUp = "rbxassetid://12216108877",
+        },
+    }
+
+    local SOUND_NAMES = {"Windy Winter", "Thunderstorm", "Light Rain", "Night", "Day"}
+    local SOUNDS = {
+        ["Windy Winter"] = "rbxassetid://6046340391",
+        Thunderstorm = "rbxassetid://4305545740",
+        ["Light Rain"] = "rbxassetid://18862087062",
+        Night = "rbxassetid://179507208",
+        Day = "rbxassetid://6189453706",
+    }
+
+    local WEATHER_NAMES = {"Light Rain", "Rain", "Snow"}
+    local WEATHERS = {
+        ["Light Rain"] = {
+            LockedToPart = true, Rate = 500, Brightness = 2, LightEmission = 0.5, LightInfluence = 0.3,
+            Texture = "rbxasset://textures/particles/sparkles_main.dds",
+            Speed = NumberRange.new(30, 50), Lifetime = NumberRange.new(9, 9),
+            EmissionDirection = Enum.NormalId.Bottom, Orientation = Enum.ParticleOrientation.FacingCameraWorldUp,
+            Size = NumberSequence.new(0.2), Squash = NumberSequence.new(3),
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.435, 0), NumberSequenceKeypoint.new(1, 1),
+            }),
+        },
+        Rain = {
+            LockedToPart = true, Rate = 600, LightEmission = 0.05, LightInfluence = 0.9,
+            Texture = "rbxassetid://1822883048",
+            Speed = NumberRange.new(60, 60), Lifetime = NumberRange.new(0.8, 0.8),
+            EmissionDirection = Enum.NormalId.Bottom, Orientation = Enum.ParticleOrientation.FacingCameraWorldUp,
+            Size = NumberSequence.new(10),
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.25, 0.784),
+                NumberSequenceKeypoint.new(0.75, 0.784), NumberSequenceKeypoint.new(1, 1),
+            }),
+        },
+        Snow = {
+            Rate = 1000, LightEmission = 0.5,
+            Texture = "http://www.roblox.com/asset/?id=99851851",
+            Speed = NumberRange.new(30, 30), SpreadAngle = Vector2.new(50, 50),
+            EmissionDirection = Enum.NormalId.Bottom,
+            Size = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.331), NumberSequenceKeypoint.new(0.551, 0.402), NumberSequenceKeypoint.new(1, 0.331),
+            }),
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.7375), NumberSequenceKeypoint.new(0.973, 0.76875), NumberSequenceKeypoint.new(1, 1),
+            }),
+        },
+    }
+
+    local TEXTURE_PACK_NAMES = {"Minecraft"}
+    local TEXTURE_PACKS = {
+        Minecraft = {
+            Slate = "http://www.roblox.com/asset/?id=8676746437",
+            Grass = "http://www.roblox.com/asset/?id=9267183930",
+            Sand = "http://www.roblox.com/asset/?id=12624140843",
+            Wood = "http://www.roblox.com/asset/?id=3258599312",
+            Brick = "http://www.roblox.com/asset/?id=10777285622",
+            Concrete = "http://www.roblox.com/asset/?id=15622710576",
+            CorrodedMetal = "rbxassetid://78612695839404",
+            Metal = "http://www.roblox.com/asset/?id=121650613091353",
+            WoodPlanks = "http://www.roblox.com/asset/?id=8676581022",
+        },
+    }
+
+    local technologies, technology_names = {}, {}
+    for _, item in Enum.Technology:GetEnumItems() do
+        technologies[item.Name] = item
+        table.insert(technology_names, item.Name)
+    end
+
+    local set_prop = function(instance, prop, value)
+        instance[prop] = value
+    end
+
+    local get_prop = function(instance, prop)
+        return instance[prop]
+    end
+
+    local same = LPH_NO_VIRTUALIZE(function(a, b)
+        if type(a) == "number" and type(b) == "number" then
+            return math.abs(a - b) < 1e-5
+        end
+        return a == b
+    end)
+
+    local write = LPH_NO_VIRTUALIZE(function(instance, prop, value)
+        if not pcall(set_prop, instance, prop, value) and sethiddenproperty then
+            pcall(sethiddenproperty, instance, prop, value)
+        end
+    end)
+
+    local set_if = LPH_NO_VIRTUALIZE(function(instance, prop, value)
+        if not same(instance[prop], value) then
+            instance[prop] = value
+        end
+    end)
+
+    -- per instance/prop: game = value the game wants, want = our value, applied = what the instance held after our write
+    local lit = {}
+    local overrides = setmetatable({[Lighting] = lit}, {__mode = "k"})
+
+    local force = LPH_NO_VIRTUALIZE(function(instance, prop, value)
+        local props = overrides[instance]
+        if not props then
+            props = {}
+            overrides[instance] = props
+        end
+        local current = instance[prop]
+        local entry = props[prop]
+        if not entry then
+            entry = {game = current}
+            props[prop] = entry
+        elseif not same(current, entry.applied) then
+            entry.game = current
+        elseif same(value, entry.want) then
+            return
+        end
+        if not same(current, value) then
+            write(instance, prop, value)
+            current = instance[prop]
+        end
+        entry.want, entry.applied = value, current
+    end)
+
+    local release = LPH_NO_VIRTUALIZE(function(instance, prop)
+        local props = overrides[instance]
+        local entry = props and props[prop]
+        if not entry then
+            return
+        end
+        props[prop] = nil
+        local ok, current = pcall(get_prop, instance, prop)
+        if ok and same(current, entry.applied) then
+            write(instance, prop, entry.game)
+        end
+    end)
+
+    local toggle_prop = LPH_NO_VIRTUALIZE(function(instance, prop, enabled, value)
+        if enabled and value ~= nil then
+            force(instance, prop, value)
+        else
+            release(instance, prop)
+        end
+    end)
+
+    local release_class = LPH_NO_VIRTUALIZE(function(class)
+        for instance, props in overrides do
+            if instance ~= Lighting and instance.ClassName == class then
+                for prop in props do
+                    release(instance, prop)
+                end
+                overrides[instance] = nil
+            end
+        end
+    end)
+
+    local owned, state = {}, {}
+
+    local drop = function(key)
+        local instance = owned[key]
+        if instance then
+            owned[key] = nil
+            pcall(instance.Destroy, instance)
+        end
+    end
+
+    local clock_text = function(clock)
+        local seconds = math.floor((clock % 24) * 3600 + 0.5)
+        return string.format("%02d:%02d:%02d", seconds // 3600 % 24, seconds // 60 % 60, seconds % 60)
+    end
+
+    local clock_value = function(text)
+        local h, m, s = string.match(text, "^%s*(%-?%d+):(%d+):?(%d*)")
+        if h then
+            return (tonumber(h) + tonumber(m) / 60 + (tonumber(s) or 0) / 3600) % 24
+        end
+    end
+
+    -- game scripts read/write the values they expect while ours stay applied; only Lighting gets this metatable
+    local lighting_mt = getgenv().__warz_lighting_mt
+    if not lighting_mt and getrawmetatable then
+        local ok, mt = pcall(getrawmetatable, Lighting)
+        if ok and type(mt) == "table" then
+            lighting_mt = mt
+            getgenv().__warz_lighting_mt = mt
+        end
+    end
+
+    local spoofed = false
+    if lighting_mt and setrawmetatable and checkcaller and newcclosure then
+        local old_index, old_newindex = lighting_mt.__index, lighting_mt.__newindex
+        local fake = {}
+        for key, value in lighting_mt do
+            fake[key] = value
+        end
+        fake.__index = newcclosure(LPH_NO_VIRTUALIZE(function(self, key)
+            if not checkcaller() then
+                local entry = lit[key]
+                if entry then
+                    return entry.game
+                elseif key == "TimeOfDay" and lit.ClockTime then
+                    return clock_text(lit.ClockTime.game)
+                end
+            end
+            return old_index(self, key)
+        end))
+        fake.__newindex = newcclosure(LPH_NO_VIRTUALIZE(function(self, key, value)
+            if not checkcaller() then
+                local entry = lit[key]
+                if entry and typeof(value) == typeof(entry.game) then
+                    entry.game = value
+                    return
+                elseif key == "TimeOfDay" and lit.ClockTime and type(value) == "string" then
+                    local clock = clock_value(value)
+                    if clock then
+                        lit.ClockTime.game = clock
+                        return
+                    end
+                end
+            end
+            return old_newindex(self, key, value)
+        end))
+        spoofed = pcall(setrawmetatable, Lighting, fake)
+    end
+
+    local update_lighting = LPH_NO_VIRTUALIZE(function()
+        toggle_prop(Lighting, "ClockTime", world.time, world.time_value)
+        toggle_prop(Lighting, "Technology", world.lighting, technologies[world.lighting_mode])
+        toggle_prop(Lighting, "Ambient", world.ambient, world.ambient_color)
+        toggle_prop(Lighting, "OutdoorAmbient", world.ambient, world.outdoor_color)
+    end)
+
+    local update_color = LPH_NO_VIRTUALIZE(function()
+        if not (world.saturation or world.contrast or world.tint) then
+            drop("color")
+            return
+        end
+        local effect = owned.color
+        if not effect or effect.Parent ~= Lighting then
+            drop("color")
+            effect = Instance.new("ColorCorrectionEffect")
+            effect.Name = "\0"
+            effect.Parent = Lighting
+            owned.color = effect
+        end
+        set_if(effect, "Saturation", world.saturation and world.saturation_value or 0)
+        set_if(effect, "Contrast", world.contrast and world.contrast_value or 0)
+        set_if(effect, "TintColor", world.tint and world.tint_color or WHITE)
+    end)
+
+    local force_atmosphere = LPH_NO_VIRTUALIZE(function(atmosphere)
+        force(atmosphere, "Color", world.atmosphere_color)
+        force(atmosphere, "Decay", world.atmosphere_decay)
+        force(atmosphere, "Density", world.atmosphere_density)
+        force(atmosphere, "Offset", world.atmosphere_offset)
+        force(atmosphere, "Haze", world.atmosphere_haze)
+        force(atmosphere, "Glare", world.atmosphere_glare)
+    end)
+
+    local update_sky = LPH_NO_VIRTUALIZE(function()
+        local faces = world.skybox and SKYBOXES[world.skybox_value]
+        local atmosphere_on = world.atmosphere
+        if not faces and state.sky then
+            state.sky = false
+            release_class("Sky")
+            drop("sky")
+        end
+        if not atmosphere_on and state.atmosphere then
+            state.atmosphere = false
+            release_class("Atmosphere")
+            drop("atmosphere")
+        end
+        if not faces and not atmosphere_on then
+            return
+        end
+        local has_sky, has_atmosphere = false, false
+        for _, child in Lighting:GetChildren() do
+            local class = child.ClassName
+            if faces and class == "Sky" then
+                has_sky = true
+                for _, face in SKY_FACES do
+                    force(child, face, faces[face])
+                end
+            elseif atmosphere_on and class == "Atmosphere" then
+                has_atmosphere = true
+                force_atmosphere(child)
+            end
+        end
+        if faces then
+            state.sky = true
+            if not has_sky then
+                drop("sky")
+                local sky = Instance.new("Sky")
+                sky.Name = "\0"
+                for _, face in SKY_FACES do
+                    sky[face] = faces[face]
+                end
+                sky.Parent = Lighting
+                owned.sky = sky
+            end
+        end
+        if atmosphere_on then
+            state.atmosphere = true
+            if not has_atmosphere then
+                drop("atmosphere")
+                local atmosphere = Instance.new("Atmosphere")
+                atmosphere.Name = "\0"
+                atmosphere.Parent = Lighting
+                owned.atmosphere = atmosphere
+                force_atmosphere(atmosphere)
+            end
+        end
+    end)
+
+    local update_weather = LPH_NO_VIRTUALIZE(function()
+        local data = world.weather and WEATHERS[world.weather_type]
+        local camera = workspace.CurrentCamera
+        if not data or not camera then
+            drop("weather")
+            return
+        end
+        local part = owned.weather
+        if not part or not part:IsDescendantOf(workspace) then
+            drop("weather")
+            part = Instance.new("Part")
+            part.Name = "\0"
+            part.Size = WEATHER_SIZE
+            part.Transparency = 1
+            part.Anchored = true
+            part.CanCollide = false
+            part.CanTouch = false
+            part.CanQuery = false
+            part.CastShadow = false
+            part.Parent = camera
+            owned.weather = part
+            state.weather_type = nil
+        end
+        if state.weather_type ~= world.weather_type then
+            if state.emitter then
+                pcall(state.emitter.Destroy, state.emitter)
+            end
+            local emitter = Instance.new("ParticleEmitter")
+            for key, value in data do
+                pcall(set_prop, emitter, key, value)
+            end
+            emitter.Parent = part
+            state.emitter, state.weather_type = emitter, world.weather_type
+            state.weather_color, state.weather_rate = nil, nil
+        end
+        local emitter = state.emitter
+        if state.weather_color ~= world.weather_color then
+            state.weather_color = world.weather_color
+            emitter.Color = ColorSequence.new(world.weather_color)
+        end
+        local rate = data.Rate * world.weather_rate / 100
+        if state.weather_rate ~= rate then
+            state.weather_rate = rate
+            emitter.Rate = rate
+        end
+        part.CFrame = CFrame.new(camera.CFrame.Position + WEATHER_OFFSET)
+    end)
+
+    local sound_parent = function()
+        local ok, hui = pcall(gethui)
+        if ok and typeof(hui) == "Instance" and hui:IsDescendantOf(game) then
+            return hui
+        end
+        return SoundService
+    end
+
+    local update_noise = LPH_NO_VIRTUALIZE(function()
+        local id = world.noise and SOUNDS[world.noise_sound]
+        if not id then
+            drop("sound")
+            return
+        end
+        local sound = owned.sound
+        if not sound or not sound:IsDescendantOf(game) then
+            drop("sound")
+            sound = Instance.new("Sound")
+            sound.Name = "\0"
+            sound.Looped = true
+            sound.Parent = sound_parent()
+            owned.sound = sound
+            state.sound_id, state.sound_volume = nil, nil
+        end
+        local volume = world.noise_volume / 65
+        if state.sound_volume ~= volume then
+            state.sound_volume = volume
+            sound.Volume = volume
+        end
+        if state.sound_id ~= id then
+            state.sound_id = id
+            sound:Stop()
+            sound.SoundId = id
+            sound:Play()
+        elseif not sound.Playing then
+            sound:Play()
+        end
+    end)
+
+    local textures = {pack = nil, variants = {}, colors = setmetatable({}, {__mode = "k"}), connection = nil}
+
+    local texture_blocked = LPH_NO_VIRTUALIZE(function(node)
+        if node:IsA("Camera") then
+            return true
+        elseif node:IsA("Model") then
+            return node:FindFirstChildOfClass("Humanoid") ~= nil or Players:GetPlayerFromCharacter(node) ~= nil
+        end
+        return node.Parent == workspace and SKIP_FOLDERS[node.Name] == true
+    end)
+
+    -- skips characters, loot, fx and the camera so only the map gets recolored
+    local texture_allowed = LPH_NO_VIRTUALIZE(function(part, memo)
+        local path = memo and {}
+        local node, allowed = part.Parent, nil
+        while allowed == nil do
+            if node == workspace then
+                allowed = true
+            elseif node == nil then
+                allowed = false
+            elseif memo and memo[node] ~= nil then
+                allowed = memo[node]
+            elseif texture_blocked(node) then
+                allowed = false
+                if memo then
+                    memo[node] = false
+                end
+            else
+                if path then
+                    table.insert(path, node)
+                end
+                node = node.Parent
+            end
+        end
+        if path then
+            for _, visited in path do
+                memo[visited] = allowed
+            end
+        end
+        return allowed
+    end)
+
+    local texture_part = LPH_NO_VIRTUALIZE(function(part, memo)
+        local pack = textures.pack
+        if pack and part:IsA("BasePart") and not part:IsA("Terrain") and pack[part.Material.Name] ~= nil
+            and part.Transparency < 0.8 and textures.colors[part] == nil and texture_allowed(part, memo) then
+            textures.colors[part] = part.Color
+            part.Color = TEXTURE_WHITE
+        end
+    end)
+
+    local set_texture_pack = function(pack)
+        if textures.connection then
+            textures.connection:Disconnect()
+            textures.connection = nil
+        end
+        for _, variant in textures.variants do
+            pcall(variant.Destroy, variant)
+        end
+        table.clear(textures.variants)
+        for part, color in textures.colors do
+            if part.Color == TEXTURE_WHITE then
+                part.Color = color
+            end
+        end
+        table.clear(textures.colors)
+        local service_props = overrides[MaterialService]
+        if service_props then
+            for prop in service_props do
+                release(MaterialService, prop)
+            end
+        end
+        textures.pack = pack
+        if not pack then
+            return
+        end
+        for name, id in pack do
+            local ok, material = pcall(get_prop, Enum.Material, name)
+            if ok and material then
+                local variant = Instance.new("MaterialVariant")
+                variant.Name = name
+                write(variant, "BaseMaterial", material)
+                write(variant, "StudsPerTile", 5)
+                for _, map in {"ColorMap", "NormalMap", "MetalnessMap", "RoughnessMap"} do
+                    write(variant, map, id)
+                end
+                variant.Parent = MaterialService
+                table.insert(textures.variants, variant)
+                pcall(force, MaterialService, name .. "Name", name)
+            end
+        end
+        local memo = {}
+        for _, part in workspace:GetDescendants() do
+            texture_part(part, memo)
+        end
+        textures.connection = workspace.DescendantAdded:Connect(texture_part)
+    end
+
+    local update_textures = function()
+        local pack = world.textures and TEXTURE_PACKS[world.texture_pack] or nil
+        if pack ~= textures.pack then
+            set_texture_pack(pack)
+        end
+    end
+
+    local updates = {update_lighting, update_color, update_sky, update_weather, update_noise, update_textures}
+
+    pcall(RunService.UnbindFromRenderStep, RunService, WORLD_STEP)
+    RunService:BindToRenderStep(WORLD_STEP, Enum.RenderPriority.Last.Value, LPH_NO_VIRTUALIZE(function()
+        for _, update in updates do
+            pcall(update)
+        end
+    end))
+
+    local ok_tech, technology = pcall(function()
+        return Lighting.Technology.Name
+    end)
+
+    return {
+        technologies = technology_names,
+        technology = ok_tech and technologies[technology] and technology or technology_names[1],
+        ambient = Lighting.Ambient,
+        outdoor = Lighting.OutdoorAmbient,
+        skyboxes = SKYBOX_NAMES,
+        sounds = SOUND_NAMES,
+        weathers = WEATHER_NAMES,
+        packs = TEXTURE_PACK_NAMES,
+        unload = function()
+            pcall(RunService.UnbindFromRenderStep, RunService, WORLD_STEP)
+            pcall(set_texture_pack, nil)
+            for _, prop in LIGHTING_PROPS do
+                pcall(release, Lighting, prop)
+            end
+            pcall(release_class, "Sky")
+            pcall(release_class, "Atmosphere")
+            for key in owned do
+                drop(key)
+            end
+            if spoofed then
+                pcall(setrawmetatable, Lighting, lighting_mt)
+            end
+        end,
+    }
+end
+
+local world_fx = setup_world(config.world)
+
 local function build_menu()
     local Window = Library:CreateWindow({
         Title = '<font color="#ffffff">WarZ PvP</font>',
@@ -2464,6 +3078,197 @@ local function build_menu()
         Rounding = 0,
     })
 
+    local WorldGroup = Tabs.Visuals:AddLeftGroupbox("World")
+
+    WorldGroup:AddToggle("WorldTime", {Text = "World Time", Default = false})
+    local WorldTimeDepbox = WorldGroup:AddDependencyBox()
+    WorldTimeDepbox:AddSlider("WorldTimeValue", {
+        Text = "Time",
+        Default = 4.5,
+        Min = 0,
+        Max = 24,
+        Rounding = 1,
+        Suffix = "h",
+    })
+    WorldTimeDepbox:SetupDependencies({
+        {Toggles.WorldTime, true},
+    })
+
+    WorldGroup:AddToggle("WorldLighting", {Text = "Lighting Mode", Default = false})
+    local WorldLightingDepbox = WorldGroup:AddDependencyBox()
+    WorldLightingDepbox:AddDropdown("WorldLightingMode", {
+        Text = "Technology",
+        Values = world_fx.technologies,
+        Default = world_fx.technology,
+    })
+    WorldLightingDepbox:SetupDependencies({
+        {Toggles.WorldLighting, true},
+    })
+
+    WorldGroup:AddToggle("WorldAmbient", {Text = "Ambient", Default = false})
+    local WorldAmbientDepbox = WorldGroup:AddDependencyBox()
+    WorldAmbientDepbox:AddLabel("Ambient Color"):AddColorPicker("WorldAmbientColor", {
+        Default = world_fx.ambient,
+        Title = "Ambient Color",
+    })
+    WorldAmbientDepbox:AddLabel("Outdoor Color"):AddColorPicker("WorldOutdoorColor", {
+        Default = world_fx.outdoor,
+        Title = "Outdoor Ambient Color",
+    })
+    WorldAmbientDepbox:SetupDependencies({
+        {Toggles.WorldAmbient, true},
+    })
+
+    WorldGroup:AddToggle("WorldSaturation", {Text = "Saturation", Default = false})
+    local WorldSaturationDepbox = WorldGroup:AddDependencyBox()
+    WorldSaturationDepbox:AddSlider("WorldSaturationValue", {
+        Text = "Amount",
+        Default = 0,
+        Min = -1,
+        Max = 1,
+        Rounding = 2,
+    })
+    WorldSaturationDepbox:SetupDependencies({
+        {Toggles.WorldSaturation, true},
+    })
+
+    WorldGroup:AddToggle("WorldContrast", {Text = "Contrast", Default = false})
+    local WorldContrastDepbox = WorldGroup:AddDependencyBox()
+    WorldContrastDepbox:AddSlider("WorldContrastValue", {
+        Text = "Amount",
+        Default = 0,
+        Min = -1,
+        Max = 1,
+        Rounding = 2,
+    })
+    WorldContrastDepbox:SetupDependencies({
+        {Toggles.WorldContrast, true},
+    })
+
+    WorldGroup:AddToggle("WorldTint", {
+        Text = "Tint",
+        Default = false,
+    }):AddColorPicker("WorldTintColor", {
+        Default = Color3.fromRGB(255, 255, 255),
+        Title = "Tint Color",
+    })
+
+    WorldGroup:AddToggle("WorldTextures", {Text = "Textures", Default = false})
+    local WorldTexturesDepbox = WorldGroup:AddDependencyBox()
+    WorldTexturesDepbox:AddDropdown("WorldTexturePack", {
+        Text = "Pack",
+        Values = world_fx.packs,
+        Default = 1,
+    })
+    WorldTexturesDepbox:SetupDependencies({
+        {Toggles.WorldTextures, true},
+    })
+
+    local SkyGroup = Tabs.Visuals:AddRightGroupbox("Sky")
+
+    SkyGroup:AddToggle("WorldSkybox", {Text = "Skybox", Default = false})
+    local SkyboxDepbox = SkyGroup:AddDependencyBox()
+    SkyboxDepbox:AddDropdown("WorldSkyboxValue", {
+        Text = "Sky",
+        Values = world_fx.skyboxes,
+        Default = "Black Storm",
+    })
+    SkyboxDepbox:SetupDependencies({
+        {Toggles.WorldSkybox, true},
+    })
+
+    SkyGroup:AddDivider()
+
+    SkyGroup:AddToggle("WorldAtmosphere", {Text = "Atmosphere", Default = false})
+    local AtmosphereDepbox = SkyGroup:AddDependencyBox()
+    AtmosphereDepbox:AddLabel("Color"):AddColorPicker("WorldAtmosphereColor", {
+        Default = Color3.fromRGB(255, 255, 255),
+        Title = "Atmosphere Color",
+    })
+    AtmosphereDepbox:AddLabel("Decay"):AddColorPicker("WorldAtmosphereDecay", {
+        Default = Color3.fromRGB(120, 120, 120),
+        Title = "Atmosphere Decay",
+    })
+    AtmosphereDepbox:AddSlider("WorldAtmosphereDensity", {
+        Text = "Density",
+        Default = 0.35,
+        Min = 0,
+        Max = 1,
+        Rounding = 3,
+    })
+    AtmosphereDepbox:AddSlider("WorldAtmosphereOffset", {
+        Text = "Offset",
+        Default = 0,
+        Min = 0,
+        Max = 1,
+        Rounding = 3,
+    })
+    AtmosphereDepbox:AddSlider("WorldAtmosphereHaze", {
+        Text = "Haze",
+        Default = 1,
+        Min = 0,
+        Max = 10,
+        Rounding = 2,
+    })
+    AtmosphereDepbox:AddSlider("WorldAtmosphereGlare", {
+        Text = "Glare",
+        Default = 10,
+        Min = 0,
+        Max = 10,
+        Rounding = 2,
+    })
+    AtmosphereDepbox:SetupDependencies({
+        {Toggles.WorldAtmosphere, true},
+    })
+
+    local WeatherGroup = Tabs.Visuals:AddRightGroupbox("Weather")
+
+    WeatherGroup:AddToggle("WorldWeather", {
+        Text = "Weather",
+        Default = false,
+    }):AddColorPicker("WorldWeatherColor", {
+        Default = Color3.fromRGB(255, 255, 255),
+        Title = "Weather Color",
+    })
+    local WeatherDepbox = WeatherGroup:AddDependencyBox()
+    WeatherDepbox:AddDropdown("WorldWeatherType", {
+        Text = "Type",
+        Values = world_fx.weathers,
+        Default = "Rain",
+    })
+    WeatherDepbox:AddSlider("WorldWeatherRate", {
+        Text = "Rate",
+        Default = 100,
+        Min = 1,
+        Max = 100,
+        Rounding = 0,
+        Suffix = "%",
+    })
+    WeatherDepbox:SetupDependencies({
+        {Toggles.WorldWeather, true},
+    })
+
+    WeatherGroup:AddDivider()
+
+    WeatherGroup:AddToggle("WorldNoise", {Text = "Background Noise", Default = false})
+    local NoiseDepbox = WeatherGroup:AddDependencyBox()
+    NoiseDepbox:AddDropdown("WorldNoiseSound", {
+        Text = "Sound",
+        Values = world_fx.sounds,
+        Default = "Night",
+    })
+    NoiseDepbox:AddSlider("WorldNoiseVolume", {
+        Text = "Volume",
+        Default = 25,
+        Min = 0,
+        Max = 100,
+        Rounding = 0,
+        Suffix = "%",
+    })
+    NoiseDepbox:SetupDependencies({
+        {Toggles.WorldNoise, true},
+    })
+
     local HealGroup = Tabs.Misc:AddLeftGroupbox("Auto Heal")
 
     HealGroup:AddToggle("AutoHeal", {
@@ -2768,6 +3573,39 @@ local function build_menu()
     bind("ESPTargetColor", function(value) esp.target_color = value end)
     bind("ESPTextSize", function(value) esp.text_size = value end)
 
+    local world = config.world
+    bind("WorldTime", function(value) world.time = value end)
+    bind("WorldTimeValue", function(value) world.time_value = value end)
+    bind("WorldLighting", function(value) world.lighting = value end)
+    bind("WorldLightingMode", function(value) world.lighting_mode = value end)
+    bind("WorldAmbient", function(value) world.ambient = value end)
+    bind("WorldAmbientColor", function(value) world.ambient_color = value end)
+    bind("WorldOutdoorColor", function(value) world.outdoor_color = value end)
+    bind("WorldSaturation", function(value) world.saturation = value end)
+    bind("WorldSaturationValue", function(value) world.saturation_value = value end)
+    bind("WorldContrast", function(value) world.contrast = value end)
+    bind("WorldContrastValue", function(value) world.contrast_value = value end)
+    bind("WorldTint", function(value) world.tint = value end)
+    bind("WorldTintColor", function(value) world.tint_color = value end)
+    bind("WorldTextures", function(value) world.textures = value end)
+    bind("WorldTexturePack", function(value) world.texture_pack = value end)
+    bind("WorldSkybox", function(value) world.skybox = value end)
+    bind("WorldSkyboxValue", function(value) world.skybox_value = value end)
+    bind("WorldAtmosphere", function(value) world.atmosphere = value end)
+    bind("WorldAtmosphereColor", function(value) world.atmosphere_color = value end)
+    bind("WorldAtmosphereDecay", function(value) world.atmosphere_decay = value end)
+    bind("WorldAtmosphereDensity", function(value) world.atmosphere_density = value end)
+    bind("WorldAtmosphereOffset", function(value) world.atmosphere_offset = value end)
+    bind("WorldAtmosphereHaze", function(value) world.atmosphere_haze = value end)
+    bind("WorldAtmosphereGlare", function(value) world.atmosphere_glare = value end)
+    bind("WorldWeather", function(value) world.weather = value end)
+    bind("WorldWeatherColor", function(value) world.weather_color = value end)
+    bind("WorldWeatherType", function(value) world.weather_type = value end)
+    bind("WorldWeatherRate", function(value) world.weather_rate = value end)
+    bind("WorldNoise", function(value) world.noise = value end)
+    bind("WorldNoiseSound", function(value) world.noise_sound = value end)
+    bind("WorldNoiseVolume", function(value) world.noise_volume = value end)
+
     local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("Menu")
 
     MenuGroup:AddToggle("KeybindMenuOpen", {Default = Library.KeybindFrame.Visible, Text = "Open Keybind Menu", Callback = function(value) Library.KeybindFrame.Visible = value end})
@@ -2821,6 +3659,7 @@ local function build_menu()
         for player in esp_objects do
             remove_esp(player)
         end
+        world_fx.unload()
         getgenv().__warz_unload = nil
         Library.Unloaded = true
     end)
