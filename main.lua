@@ -136,6 +136,29 @@ local config = {
         target_color = Color3.fromRGB(255, 60, 60),
     },
 
+    rage = {
+        enabled = false,
+        hit_parts = {Head = true},
+        hit_mode = "Priority",
+        priority = "Crosshair",
+        max_distance = 500,
+        ignore_fov = false,
+        ffa = false,
+        prediction = true,
+        prediction_mult = 1,
+        fov = 200,
+        fov_position = "Center",
+        show_fov = false,
+        fov_color = Color3.fromRGB(255, 255, 255),
+        fov_outline = Color3.fromRGB(0, 0, 0),
+        fov_filled = false,
+        fov_fill_color = Color3.fromRGB(255, 255, 255),
+        fov_fill_transparency = 0.7,
+        indicator = true,
+        color = Color3.fromRGB(255, 255, 255),
+        status_color = Color3.fromHSV(0.847319, 0.560784, 1),
+    },
+
     world = {
         time = false,
         time_value = 4.5,
@@ -258,13 +281,17 @@ local part_groups = {
 local group_order = {"Head", "Neck", "Torso", "Arms", "Legs"}
 
 local hit_part_names = {}
+local ragebot = {parts = {}, active = false}
 
 local function rebuild_hit_parts()
-    table.clear(hit_part_names)
-    for _, group in group_order do
-        if config.hit_parts[group] then
-            for _, name in part_groups[group] do
-                table.insert(hit_part_names, name)
+    for _, entry in {{hit_part_names, config.hit_parts}, {ragebot.parts, config.rage.hit_parts}} do
+        local list, groups = entry[1], entry[2]
+        table.clear(list)
+        for _, group in group_order do
+            if groups[group] then
+                for _, name in part_groups[group] do
+                    table.insert(list, name)
+                end
             end
         end
     end
@@ -309,24 +336,24 @@ local alive = LPH_NO_VIRTUALIZE(function(char)
     return not hum or hum.Health > 0
 end)
 
-local skip_player = LPH_NO_VIRTUALIZE(function(player)
+local skip_player = LPH_NO_VIRTUALIZE(function(player, ffa)
     if config.whitelist[player.Name] then
         return true
     end
-    if config.teamcheck and (same_party(player) or not_match_enemy(player)) then
+    if not ffa and config.teamcheck and (same_party(player) or not_match_enemy(player)) then
         return true
     end
-    if config.clancheck and same_clan(player) then
+    if not ffa and config.clancheck and same_clan(player) then
         return true
     end
     return config.protect_check and spawn_protected(player)
 end)
 
-local target_chars = LPH_NO_VIRTUALIZE(function()
+local target_chars = LPH_NO_VIRTUALIZE(function(ffa)
     local list = {}
     for _, player in Players:GetPlayers() do
         local char = player.Character
-        if player ~= localplayer and alive(char) and not skip_player(player) then
+        if player ~= localplayer and alive(char) and not skip_player(player, ffa) then
             table.insert(list, char)
         end
     end
@@ -575,10 +602,16 @@ local reach = LPH_NO_VIRTUALIZE(function()
     return immediate and math.huge or speed * (projectile.Lifetime - 0.1)
 end)
 
-local solve = LPH_NO_VIRTUALIZE(function(origin, char, point)
+local solve = LPH_NO_VIRTUALIZE(function(origin, char, point, lead, drop)
     local speed, gravity, immediate = ballistics()
     if immediate then
         return point, point
+    end
+    if lead == nil then
+        lead = config.prediction and 1 or 0
+    end
+    if drop == nil then
+        drop = config.drop
     end
     local root = char:FindFirstChild("HumanoidRootPart")
     local velocity = root and root.AssemblyLinearVelocity or Vector3.zero
@@ -588,9 +621,9 @@ local solve = LPH_NO_VIRTUALIZE(function(origin, char, point)
         if t > projectile.Lifetime - 0.05 then
             return nil
         end
-        predicted = config.prediction and point + velocity * t or point
+        predicted = point + velocity * (t * lead)
         aim = predicted
-        if config.drop then
+        if drop then
             aim += Vector3.new(0, 0.5 * gravity * t * (t + projectile.StepSeconds), 0)
         end
     end
@@ -655,9 +688,9 @@ local get_target = LPH_NO_VIRTUALIZE(function(origin, buried)
     end
 end)
 
-local random_part = LPH_NO_VIRTUALIZE(function(char, origin, buried)
+local random_part = LPH_NO_VIRTUALIZE(function(char, origin, buried, names)
     local shapes = get_shapes(char)
-    local order = table.clone(hit_part_names)
+    local order = table.clone(names or hit_part_names)
     for i = #order, 2, -1 do
         local j = math.random(1, i)
         order[i], order[j] = order[j], order[i]
@@ -693,6 +726,105 @@ local random_part = LPH_NO_VIRTUALIZE(function(char, origin, buried)
     end
 end)
 
+do
+    local rage = config.rage
+    local RAGE_SCANS = 6
+
+    ragebot.fov_center = LPH_NO_VIRTUALIZE(function()
+        if rage.fov_position == "Mouse" then
+            return UserInputService:GetMouseLocation()
+        end
+        return screen_center()
+    end)
+
+    local in_fov = LPH_NO_VIRTUALIZE(function(char, camera, center)
+        local pos = camera:WorldToViewportPoint(char.HumanoidRootPart.Position)
+        return pos.Z > 0 and (Vector2.new(pos.X, pos.Y) - center).Magnitude - 4 * px_per_stud(camera, pos.Z) <= rage.fov
+    end)
+
+    local score = LPH_NO_VIRTUALIZE(function(char, origin, camera)
+        local root = char.HumanoidRootPart
+        if rage.priority == "Distance" then
+            return (root.Position - origin).Magnitude
+        elseif rage.priority == "Health" then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            return hum and hum.Health or math.huge
+        end
+        local dir = root.Position - camera.CFrame.Position
+        if dir.Magnitude < 0.01 then
+            return 0
+        end
+        return math.acos(math.clamp(camera.CFrame.LookVector:Dot(dir.Unit), -1, 1))
+    end)
+
+    -- first selected part with a clear line, else one wallbang can reach
+    local reachable_part = LPH_NO_VIRTUALIZE(function(origin, char, buried)
+        local shapes = get_shapes(char)
+        if not buried then
+            for _, name in ragebot.parts do
+                local shape = shapes[name]
+                if shape and clear_line(origin, shape.cf.Position) then
+                    return name
+                end
+            end
+        end
+        if config.wallbang then
+            for _, name in ragebot.parts do
+                local shape = shapes[name]
+                if shape and spoof_origin(origin, char, shape, false) then
+                    return name
+                end
+            end
+        end
+    end)
+
+    local allowed = LPH_NO_VIRTUALIZE(function(char)
+        if not alive(char) then
+            return false
+        end
+        local player = Players:GetPlayerFromCharacter(char)
+        return not player or not skip_player(player, rage.ffa)
+    end)
+
+    ragebot.find = LPH_NO_VIRTUALIZE(function(origin, buried)
+        local camera = workspace.CurrentCamera
+        local center = ragebot.fov_center()
+        local max_range = math.min(rage.max_distance * SCALE, reach())
+        local function usable(char)
+            return (char.HumanoidRootPart.Position - origin).Magnitude <= max_range
+                and (rage.ignore_fov or in_fov(char, camera, center))
+        end
+        local locked = ragebot.locked
+        if locked then
+            if allowed(locked) and usable(locked) then
+                local name = reachable_part(origin, locked, buried)
+                if name then
+                    return {char = locked, name = name, reachable = true}
+                end
+            else
+                ragebot.locked = nil
+            end
+        end
+        local list = {}
+        for _, char in target_chars(rage.ffa) do
+            if char ~= locked and usable(char) then
+                table.insert(list, {char = char, score = score(char, origin, camera)})
+            end
+        end
+        table.sort(list, function(a, b)
+            return a.score < b.score
+        end)
+        for i = 1, math.min(#list, RAGE_SCANS) do
+            local char = list[i].char
+            local name = reachable_part(origin, char, buried)
+            if name then
+                ragebot.locked = char
+                return {char = char, name = name, reachable = true}
+            end
+        end
+    end)
+end
+
 local look_for = LPH_NO_VIRTUALIZE(function(camera_pos, muzzle, aim)
     local dir = (aim - muzzle).Unit
     local hit = workspace:Raycast(muzzle, dir * 5000, world_params)
@@ -727,16 +859,22 @@ local shot_tracers = {}
 
 local aim_shot = LPH_NO_VIRTUALIZE(function(camera_pos, muzzle, buried)
     refresh_filter()
+    local raging = ragebot.active
     local target = current_target
     if not target or not alive(target.char) then
-        target = get_target(muzzle, buried)
+        if raging then
+            target = ragebot.find(muzzle, buried)
+        else
+            target = get_target(muzzle, buried)
+        end
     end
     if not target then
         return
     end
     local char, origin, point = target.char, nil, nil
-    if config.hit_mode == "Random" then
-        origin, point = select(2, random_part(char, muzzle, buried))
+    local hit_mode = raging and config.rage.hit_mode or config.hit_mode
+    if hit_mode == "Random" then
+        origin, point = select(2, random_part(char, muzzle, buried, raging and ragebot.parts or nil))
     else
         local shape = get_shapes(char)[target.name]
         if shape then
@@ -746,7 +884,11 @@ local aim_shot = LPH_NO_VIRTUALIZE(function(camera_pos, muzzle, buried)
     if not origin then
         return
     end
-    local aim, predicted = solve(origin, char, point)
+    local lead, drop
+    if raging then
+        lead, drop = config.rage.prediction and config.rage.prediction_mult or 0, true
+    end
+    local aim, predicted = solve(origin, char, point, lead, drop)
     if not aim then
         return
     end
@@ -871,7 +1013,7 @@ local on_fire = LPH_NO_VIRTUALIZE(function(args)
     local pose_sent = false
     local tracer_to
     local camera_pos, muzzle = args[4], args[5]
-    if aim_active and typeof(camera_pos) == "Vector3" and typeof(muzzle) == "Vector3" then
+    if (aim_active or ragebot.active) and typeof(camera_pos) == "Vector3" and typeof(muzzle) == "Vector3" then
         local stance = args[3]
         local buried = barrel_buried(muzzle, args[6], args[7], camera_pos, type(stance) == "table" and stance.inTps == true)
         local shot = aim_shot(camera_pos, muzzle, buried)
@@ -927,7 +1069,7 @@ local on_pose = LPH_NO_VIRTUALIZE(function(args)
         return
     end
     last_pose = table.clone(payload)
-    if aim_active and config.look_spoof and spoof_look and os.clock() - spoof_time < 0.25 then
+    if (aim_active or ragebot.active) and config.look_spoof and spoof_look and os.clock() - spoof_time < 0.25 then
         apply_look(payload, spoof_look)
     elseif aa_active() and type(payload.lx) == "number" and type(payload.lz) == "number" then
         local pitch = aa_pitch()
@@ -1003,7 +1145,7 @@ end)
 
 if not table.isfrozen(solid_probe) then
     solid_probe.BarrelBuried = LPH_NO_VIRTUALIZE(function(...)
-        if config.wallbang and aim_active and current_target and current_target.reachable then
+        if config.wallbang and (aim_active or ragebot.active) and current_target and current_target.reachable then
             return false, nil
         end
         return old_barrel_buried(...)
@@ -1081,7 +1223,7 @@ end)
 local last_auto_shot, last_auto_reload = 0, 0
 
 local update_auto_shoot = LPH_NO_VIRTUALIZE(function()
-    if not auto_shoot_active or not fire_fn or not aim_active or Library.Toggled then
+    if not auto_shoot_active or not fire_fn or not (aim_active or ragebot.active) or Library.Toggled then
         return
     end
     local target = current_target
@@ -1805,6 +1947,65 @@ end)
 
 Library:GiveSignal(Players.PlayerRemoving:Connect(remove_esp))
 
+do
+    local rage = config.rage
+    local fov_fill = new_drawing("Circle", {Thickness = 1, NumSides = 64, Filled = true, Transparency = 0.3, Visible = false})
+    local fov_outline = new_drawing("Circle", {Thickness = 3, NumSides = 64, Filled = false, Transparency = 1, Visible = false})
+    local fov_circle = new_drawing("Circle", {Thickness = 1, NumSides = 64, Filled = false, Transparency = 1, Visible = false})
+    local label = new_drawing("Text", {Text = "ragebot : ", Size = 13, Font = 2, Outline = true, Transparency = 1, Visible = false})
+    local status = new_drawing("Text", {Text = "", Size = 13, Font = 2, Outline = true, Transparency = 1, Visible = false})
+    ragebot.drawings = {fov_fill, fov_outline, fov_circle, label, status}
+
+    local get_bounds = function(text)
+        return text.TextBounds
+    end
+
+    local text_width = LPH_NO_VIRTUALIZE(function(text)
+        local ok, bounds = pcall(get_bounds, text)
+        if ok and typeof(bounds) == "Vector2" then
+            return bounds.X
+        end
+        return #text.Text * text.Size * 0.5
+    end)
+
+    local dots, dots_time = 1, 0
+
+    ragebot.draw = LPH_NO_VIRTUALIZE(function(target)
+        local show_fov = rage.enabled and rage.show_fov and not rage.ignore_fov
+        fov_circle.Visible, fov_outline.Visible = show_fov, show_fov
+        fov_fill.Visible = show_fov and rage.fov_filled
+        if show_fov then
+            local center = ragebot.fov_center()
+            fov_circle.Position, fov_circle.Radius, fov_circle.Color = center, rage.fov, rage.fov_color
+            fov_outline.Position, fov_outline.Radius, fov_outline.Color = center, rage.fov, rage.fov_outline
+            if rage.fov_filled then
+                fov_fill.Position, fov_fill.Radius, fov_fill.Color = center, rage.fov, rage.fov_fill_color
+                fov_fill.Transparency = 1 - rage.fov_fill_transparency
+            end
+        end
+
+        local show_text = rage.indicator and ragebot.active and target ~= nil
+        label.Visible, status.Visible = show_text, show_text
+        if not show_text then
+            return
+        end
+        local now = os.clock()
+        if now - dots_time > 0.3 then
+            dots, dots_time = dots % 3 + 1, now
+        end
+        local clip = tonumber(localplayer:GetAttribute("CSGO_ClipAmmo"))
+        local player = Players:GetPlayerFromCharacter(target.char)
+        local name = player and display_name(player) or target.char.Name
+        status.Text = (clip and clip <= 0 and "reloading" or "killing " .. name) .. string.rep(".", dots)
+        label.Color, status.Color = rage.color, rage.status_color
+        local center = screen_center()
+        local label_width = text_width(label)
+        local x = center.X - (label_width + text_width(status)) * 0.5
+        label.Position = Vector2.new(x, center.Y + 40)
+        status.Position = Vector2.new(x + label_width, center.Y + 40)
+    end)
+end
+
 local aa_saved
 local AA_RESTORE_STEP = "warz_anti_aim_restore"
 
@@ -2064,6 +2265,10 @@ Library:GiveSignal(RunService.RenderStepped:Connect(LPH_NO_VIRTUALIZE(function()
     aim_active = key_active(config.enabled, Options.SilentAimKey)
     auto_shoot_active = key_active(config.auto_shoot, Options.AutoShootKey)
     ug_key_active = key_active(config.underground, Options.UndergroundKey)
+    ragebot.active = key_active(config.rage.enabled, Options.RagebotKey)
+    if not ragebot.active then
+        ragebot.locked = nil
+    end
 
     update_auto_gun()
     drive_hold_fire()
@@ -2075,7 +2280,7 @@ Library:GiveSignal(RunService.RenderStepped:Connect(LPH_NO_VIRTUALIZE(function()
     local my_char = localplayer.Character
     local my_root = my_char and my_char:FindFirstChild("HumanoidRootPart")
     local target, target_pos
-    if config.enabled and my_root then
+    if (config.enabled or ragebot.active) and my_root then
         refresh_filter()
         local ok, points = pcall(fps_view.BarrelPoints)
         points = ok and type(points) == "table" and points or {}
@@ -2086,7 +2291,11 @@ Library:GiveSignal(RunService.RenderStepped:Connect(LPH_NO_VIRTUALIZE(function()
         end
         local ok_root, gun_root = pcall(fps_view.GunRoot)
         local buried = muzzle ~= nil and barrel_buried(muzzle, points[2], ok_root and gun_root or nil, camera.CFrame.Position, localplayer:GetAttribute("CSGO_Tps") == true)
-        target = get_target(muzzle or my_root.Position, buried)
+        if ragebot.active then
+            target = ragebot.find(muzzle or my_root.Position, buried)
+        else
+            target = get_target(muzzle or my_root.Position, buried)
+        end
         local shape = target and get_shapes(target.char)[target.name]
         target_pos = shape and shape.cf.Position
         if not target_pos then
@@ -2096,22 +2305,25 @@ Library:GiveSignal(RunService.RenderStepped:Connect(LPH_NO_VIRTUALIZE(function()
     current_target = target
     update_auto_shoot()
 
-    if target and aim_active and config.look_spoof and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+    if target and (aim_active or ragebot.active) and config.look_spoof and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
         spoof_look, spoof_time = (target_pos - camera.CFrame.Position).Unit, os.clock()
     end
 
+    local target_on_screen = false
     if target then
         local pos = camera:WorldToViewportPoint(target_pos)
         local screen_pos = Vector2.new(pos.X, pos.Y)
+        target_on_screen = pos.Z > 0
         dot.Position = screen_pos
         dot.Color = config.target_dot_color
         target_line.From = screen_center()
         target_line.To = screen_pos
         target_line.Color = config.target_tracer_color
     end
-    dot.Visible = target ~= nil and config.show_target
-    target_line.Visible = target ~= nil and config.target_tracer
+    dot.Visible = target_on_screen and config.show_target
+    target_line.Visible = target_on_screen and config.target_tracer
 
+    ragebot.draw(target)
     update_bullet_tracers(camera)
 
     local target_char = target and target.char
@@ -2736,6 +2948,7 @@ local function build_menu()
 
     local Tabs = {
         Main = Window:AddTab("Main"),
+        Ragebot = Window:AddTab("Ragebot"),
         Visuals = Window:AddTab("Visuals"),
         Misc = Window:AddTab("Misc"),
         ["UI Settings"] = Window:AddTab("UI Settings"),
@@ -2789,22 +3002,6 @@ local function build_menu()
         Max = 4000,
         Rounding = 0,
         Suffix = "m",
-    })
-
-    SilentGroup:AddDivider()
-
-    SilentGroup:AddToggle("AutoShoot", {
-        Text = "Auto Shoot",
-        Default = false,
-    }):AddKeyPicker("AutoShootKey", {
-        Default = "None",
-        Mode = "Toggle",
-        Modes = {"Toggle", "Hold", "Always"},
-        Text = "Auto Shoot",
-    })
-    SilentGroup:AddToggle("AutoReload", {
-        Text = "Auto Reload",
-        Default = true,
     })
 
     AimbotGroup:AddToggle("Aimbot", {
@@ -3024,6 +3221,122 @@ local function build_menu()
     for _, flag in {"BulletTracerColor", "BulletTracerGradient", "BulletTracerOutline"} do
         Options[flag].HasTransparency = true
     end
+
+    local RageGroup = Tabs.Ragebot:AddLeftGroupbox("Ragebot")
+
+    RageGroup:AddToggle("RagebotEnabled", {
+        Text = "Enable Ragebot",
+        Default = false,
+    }):AddColorPicker("RagebotColor", {
+        Default = Color3.fromRGB(255, 255, 255),
+        Title = "Ragebot Color",
+    }):AddColorPicker("RagebotStatusColor", {
+        Default = Color3.fromHSV(0.847319, 0.560784, 1),
+        Title = "Status Color",
+    }):AddKeyPicker("RagebotKey", {
+        Default = "None",
+        Mode = "Toggle",
+        Modes = {"Toggle", "Hold", "Always"},
+        Text = "Ragebot",
+    })
+    RageGroup:AddToggle("RagebotIndicator", {Text = "Show Indicator", Default = true})
+
+    RageGroup:AddDivider()
+
+    RageGroup:AddDropdown("RagebotHitParts", {
+        Text = "Hit Part (Multi)",
+        Values = {"Head", "Neck", "Torso", "Arms", "Legs"},
+        Default = 1,
+        Multi = true,
+    })
+    RageGroup:AddDropdown("RagebotHitMode", {
+        Text = "Hit Part Mode",
+        Values = {"Priority", "Random"},
+        Default = 1,
+    })
+    RageGroup:AddDropdown("RagebotPriority", {
+        Text = "Target Priority",
+        Values = {"Crosshair", "Distance", "Health"},
+        Default = 1,
+    })
+    RageGroup:AddSlider("RagebotMaxDistance", {
+        Text = "Max Distance",
+        Default = 500,
+        Min = 25,
+        Max = 4000,
+        Rounding = 0,
+        Suffix = "m",
+    })
+    RageGroup:AddToggle("RagebotIgnoreFOV", {Text = "360° (Ignore FOV)", Default = false})
+    RageGroup:AddToggle("RagebotFFA", {Text = "FFA Mode", Default = false})
+    RageGroup:AddToggle("RagebotPrediction", {Text = "Prediction", Default = true})
+    local RagePredictionDepbox = RageGroup:AddDependencyBox()
+    RagePredictionDepbox:AddSlider("RagebotPredictionMult", {
+        Text = "Prediction Mult",
+        Default = 1,
+        Min = 0.1,
+        Max = 3,
+        Rounding = 1,
+        Suffix = "x",
+    })
+    RagePredictionDepbox:SetupDependencies({
+        {Toggles.RagebotPrediction, true},
+    })
+
+    local AutoShootGroup = Tabs.Ragebot:AddLeftGroupbox("Auto Shoot")
+
+    AutoShootGroup:AddToggle("AutoShoot", {
+        Text = "Auto Shoot",
+        Default = false,
+    }):AddKeyPicker("AutoShootKey", {
+        Default = "None",
+        Mode = "Toggle",
+        Modes = {"Toggle", "Hold", "Always"},
+        Text = "Auto Shoot",
+    })
+    AutoShootGroup:AddToggle("AutoReload", {
+        Text = "Auto Reload",
+        Default = true,
+    })
+
+    local RageFovGroup = Tabs.Ragebot:AddRightGroupbox("Ragebot FOV")
+
+    RageFovGroup:AddSlider("RagebotFOV", {
+        Text = "FOV Radius",
+        Default = 200,
+        Min = 10,
+        Max = 800,
+        Rounding = 0,
+        Suffix = "px",
+    })
+    RageFovGroup:AddDropdown("RagebotFOVPosition", {
+        Text = "Position",
+        Values = {"Center", "Mouse"},
+        Default = 1,
+    })
+    RageFovGroup:AddToggle("RagebotShowFOV", {
+        Text = "Show FOV",
+        Default = false,
+    }):AddColorPicker("RagebotFOVColor", {
+        Default = Color3.fromRGB(255, 255, 255),
+        Title = "FOV Color",
+    }):AddColorPicker("RagebotFOVOutline", {
+        Default = Color3.fromRGB(0, 0, 0),
+        Title = "FOV Outline Color",
+    })
+    local RageFovDepbox = RageFovGroup:AddDependencyBox()
+    RageFovDepbox:AddToggle("RagebotFOVFilled", {
+        Text = "Filled",
+        Default = false,
+    }):AddColorPicker("RagebotFOVFillColor", {
+        Default = Color3.fromRGB(255, 255, 255),
+        Title = "Fill Color",
+        Transparency = 0.7,
+    })
+    RageFovDepbox:SetupDependencies({
+        {Toggles.RagebotShowFOV, true},
+    })
+    Options.RagebotFOVFillColor.HasTransparency = true
 
     local EspGroup = Tabs.Visuals:AddLeftGroupbox("ESP")
 
@@ -3524,6 +3837,38 @@ local function build_menu()
         end
     end)
     bind("AutoReload", function(value) config.auto_reload = value end)
+
+    local rage = config.rage
+    bind("RagebotEnabled", function(value) rage.enabled = value end)
+    Options.RagebotKey:OnClick(function(toggled)
+        if Options.RagebotKey.Mode == "Toggle" then
+            Toggles.RagebotEnabled:SetValue(toggled)
+        end
+    end)
+    bind("RagebotColor", function(value) rage.color = value end)
+    bind("RagebotStatusColor", function(value) rage.status_color = value end)
+    bind("RagebotIndicator", function(value) rage.indicator = value end)
+    bind("RagebotHitParts", function(value)
+        rage.hit_parts = value
+        rebuild_hit_parts()
+    end)
+    bind("RagebotHitMode", function(value) rage.hit_mode = value end)
+    bind("RagebotPriority", function(value) rage.priority = value end)
+    bind("RagebotMaxDistance", function(value) rage.max_distance = value end)
+    bind("RagebotIgnoreFOV", function(value) rage.ignore_fov = value end)
+    bind("RagebotFFA", function(value) rage.ffa = value end)
+    bind("RagebotPrediction", function(value) rage.prediction = value end)
+    bind("RagebotPredictionMult", function(value) rage.prediction_mult = value end)
+    bind("RagebotFOV", function(value) rage.fov = value end)
+    bind("RagebotFOVPosition", function(value) rage.fov_position = value end)
+    bind("RagebotShowFOV", function(value) rage.show_fov = value end)
+    bind("RagebotFOVColor", function(value) rage.fov_color = value end)
+    bind("RagebotFOVOutline", function(value) rage.fov_outline = value end)
+    bind("RagebotFOVFilled", function(value) rage.fov_filled = value end)
+    bind("RagebotFOVFillColor", function(value)
+        rage.fov_fill_color = value
+        rage.fov_fill_transparency = Options.RagebotFOVFillColor.Transparency
+    end)
     bind("RapidFire", function(value) config.rapid_fire = value end)
     bind("RapidFireRate", function(value) config.rapid_fire_rate = value end)
     bind("MagicRadius", function(value) config.wallbang_radius = value end)
@@ -3652,6 +3997,9 @@ local function build_menu()
         circle:Remove()
         dot:Remove()
         target_line:Remove()
+        for _, drawing in ragebot.drawings do
+            drawing:Remove()
+        end
         for _, tracer in shot_tracers do
             remove_tracer(tracer)
         end
