@@ -139,13 +139,8 @@ local config = {
     rage = {
         enabled = false,
         hit_parts = {Head = true},
-        hit_mode = "Priority",
-        priority = "Crosshair",
         max_distance = 500,
         ignore_fov = false,
-        ffa = false,
-        prediction = true,
-        prediction_mult = 1,
         fov = 200,
         fov_position = "Center",
         show_fov = false,
@@ -336,24 +331,24 @@ local alive = LPH_NO_VIRTUALIZE(function(char)
     return not hum or hum.Health > 0
 end)
 
-local skip_player = LPH_NO_VIRTUALIZE(function(player, ffa)
+local skip_player = LPH_NO_VIRTUALIZE(function(player)
     if config.whitelist[player.Name] then
         return true
     end
-    if not ffa and config.teamcheck and (same_party(player) or not_match_enemy(player)) then
+    if config.teamcheck and (same_party(player) or not_match_enemy(player)) then
         return true
     end
-    if not ffa and config.clancheck and same_clan(player) then
+    if config.clancheck and same_clan(player) then
         return true
     end
     return config.protect_check and spawn_protected(player)
 end)
 
-local target_chars = LPH_NO_VIRTUALIZE(function(ffa)
+local target_chars = LPH_NO_VIRTUALIZE(function()
     local list = {}
     for _, player in Players:GetPlayers() do
         local char = player.Character
-        if player ~= localplayer and alive(char) and not skip_player(player, ffa) then
+        if player ~= localplayer and alive(char) and not skip_player(player) then
             table.insert(list, char)
         end
     end
@@ -602,16 +597,10 @@ local reach = LPH_NO_VIRTUALIZE(function()
     return immediate and math.huge or speed * (projectile.Lifetime - 0.1)
 end)
 
-local solve = LPH_NO_VIRTUALIZE(function(origin, char, point, lead, drop)
+local solve = LPH_NO_VIRTUALIZE(function(origin, char, point)
     local speed, gravity, immediate = ballistics()
     if immediate then
         return point, point
-    end
-    if lead == nil then
-        lead = config.prediction and 1 or 0
-    end
-    if drop == nil then
-        drop = config.drop
     end
     local root = char:FindFirstChild("HumanoidRootPart")
     local velocity = root and root.AssemblyLinearVelocity or Vector3.zero
@@ -621,9 +610,9 @@ local solve = LPH_NO_VIRTUALIZE(function(origin, char, point, lead, drop)
         if t > projectile.Lifetime - 0.05 then
             return nil
         end
-        predicted = point + velocity * (t * lead)
+        predicted = config.prediction and point + velocity * t or point
         aim = predicted
-        if drop then
+        if config.drop then
             aim += Vector3.new(0, 0.5 * gravity * t * (t + projectile.StepSeconds), 0)
         end
     end
@@ -688,9 +677,9 @@ local get_target = LPH_NO_VIRTUALIZE(function(origin, buried)
     end
 end)
 
-local random_part = LPH_NO_VIRTUALIZE(function(char, origin, buried, names)
+local random_part = LPH_NO_VIRTUALIZE(function(char, origin, buried)
     local shapes = get_shapes(char)
-    local order = table.clone(names or hit_part_names)
+    local order = table.clone(hit_part_names)
     for i = #order, 2, -1 do
         local j = math.random(1, i)
         order[i], order[j] = order[j], order[i]
@@ -742,15 +731,9 @@ do
         return pos.Z > 0 and (Vector2.new(pos.X, pos.Y) - center).Magnitude - 4 * px_per_stud(camera, pos.Z) <= rage.fov
     end)
 
-    local score = LPH_NO_VIRTUALIZE(function(char, origin, camera)
-        local root = char.HumanoidRootPart
-        if rage.priority == "Distance" then
-            return (root.Position - origin).Magnitude
-        elseif rage.priority == "Health" then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            return hum and hum.Health or math.huge
-        end
-        local dir = root.Position - camera.CFrame.Position
+    -- angle from the crosshair, so targets behind the camera still sort correctly in 360 mode
+    local crosshair_angle = LPH_NO_VIRTUALIZE(function(char, camera)
+        local dir = char.HumanoidRootPart.Position - camera.CFrame.Position
         if dir.Magnitude < 0.01 then
             return 0
         end
@@ -783,7 +766,7 @@ do
             return false
         end
         local player = Players:GetPlayerFromCharacter(char)
-        return not player or not skip_player(player, rage.ffa)
+        return not player or not skip_player(player)
     end)
 
     ragebot.find = LPH_NO_VIRTUALIZE(function(origin, buried)
@@ -806,9 +789,9 @@ do
             end
         end
         local list = {}
-        for _, char in target_chars(rage.ffa) do
+        for _, char in target_chars() do
             if char ~= locked and usable(char) then
-                table.insert(list, {char = char, score = score(char, origin, camera)})
+                table.insert(list, {char = char, score = crosshair_angle(char, camera)})
             end
         end
         table.sort(list, function(a, b)
@@ -872,9 +855,8 @@ local aim_shot = LPH_NO_VIRTUALIZE(function(camera_pos, muzzle, buried)
         return
     end
     local char, origin, point = target.char, nil, nil
-    local hit_mode = raging and config.rage.hit_mode or config.hit_mode
-    if hit_mode == "Random" then
-        origin, point = select(2, random_part(char, muzzle, buried, raging and ragebot.parts or nil))
+    if not raging and config.hit_mode == "Random" then
+        origin, point = select(2, random_part(char, muzzle, buried))
     else
         local shape = get_shapes(char)[target.name]
         if shape then
@@ -884,11 +866,7 @@ local aim_shot = LPH_NO_VIRTUALIZE(function(camera_pos, muzzle, buried)
     if not origin then
         return
     end
-    local lead, drop
-    if raging then
-        lead, drop = config.rage.prediction and config.rage.prediction_mult or 0, true
-    end
-    local aim, predicted = solve(origin, char, point, lead, drop)
+    local aim, predicted = solve(origin, char, point)
     if not aim then
         return
     end
@@ -3249,16 +3227,6 @@ local function build_menu()
         Default = 1,
         Multi = true,
     })
-    RageGroup:AddDropdown("RagebotHitMode", {
-        Text = "Hit Part Mode",
-        Values = {"Priority", "Random"},
-        Default = 1,
-    })
-    RageGroup:AddDropdown("RagebotPriority", {
-        Text = "Target Priority",
-        Values = {"Crosshair", "Distance", "Health"},
-        Default = 1,
-    })
     RageGroup:AddSlider("RagebotMaxDistance", {
         Text = "Max Distance",
         Default = 500,
@@ -3268,20 +3236,6 @@ local function build_menu()
         Suffix = "m",
     })
     RageGroup:AddToggle("RagebotIgnoreFOV", {Text = "360° (Ignore FOV)", Default = false})
-    RageGroup:AddToggle("RagebotFFA", {Text = "FFA Mode", Default = false})
-    RageGroup:AddToggle("RagebotPrediction", {Text = "Prediction", Default = true})
-    local RagePredictionDepbox = RageGroup:AddDependencyBox()
-    RagePredictionDepbox:AddSlider("RagebotPredictionMult", {
-        Text = "Prediction Mult",
-        Default = 1,
-        Min = 0.1,
-        Max = 3,
-        Rounding = 1,
-        Suffix = "x",
-    })
-    RagePredictionDepbox:SetupDependencies({
-        {Toggles.RagebotPrediction, true},
-    })
 
     local AutoShootGroup = Tabs.Ragebot:AddLeftGroupbox("Auto Shoot")
 
@@ -3852,13 +3806,8 @@ local function build_menu()
         rage.hit_parts = value
         rebuild_hit_parts()
     end)
-    bind("RagebotHitMode", function(value) rage.hit_mode = value end)
-    bind("RagebotPriority", function(value) rage.priority = value end)
     bind("RagebotMaxDistance", function(value) rage.max_distance = value end)
     bind("RagebotIgnoreFOV", function(value) rage.ignore_fov = value end)
-    bind("RagebotFFA", function(value) rage.ffa = value end)
-    bind("RagebotPrediction", function(value) rage.prediction = value end)
-    bind("RagebotPredictionMult", function(value) rage.prediction_mult = value end)
     bind("RagebotFOV", function(value) rage.fov = value end)
     bind("RagebotFOVPosition", function(value) rage.fov_position = value end)
     bind("RagebotShowFOV", function(value) rage.show_fov = value end)
