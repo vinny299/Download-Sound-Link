@@ -3030,7 +3030,7 @@ local function build_menu()
     local EspGroup = Tabs.Visuals:AddLeftGroupbox("ESP")
 
     EspGroup:AddToggle("ESPEnabled", {
-        Text = "ESP",
+        Text = "Enabled",
         Default = false,
     }):AddKeyPicker("ESPKey", {
         Default = "None",
