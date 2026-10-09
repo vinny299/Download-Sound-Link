@@ -1627,6 +1627,7 @@ local update_bullet_tracers = LPH_NO_VIRTUALIZE(function(camera)
 end)
 
 local esp_objects = {}
+local esp_active = false
 
 local get_esp = LPH_NO_VIRTUALIZE(function(player)
     local objects = esp_objects[player]
@@ -1721,7 +1722,7 @@ end)
 local update_esp = LPH_NO_VIRTUALIZE(function(player, camera, my_root, target_char)
     local objects = get_esp(player)
     local char = player.Character
-    if not esp.enabled or not alive(char) then
+    if not esp_active or not alive(char) then
         hide_esp(objects)
         return
     end
@@ -2064,6 +2065,7 @@ Library:GiveSignal(RunService.RenderStepped:Connect(LPH_NO_VIRTUALIZE(function()
     aim_active = key_active(config.enabled, Options.SilentAimKey)
     auto_shoot_active = key_active(config.auto_shoot, Options.AutoShootKey)
     ug_key_active = key_active(config.underground, Options.UndergroundKey)
+    esp_active = key_active(esp.enabled, Options.ESPKey)
 
     update_auto_gun()
     drive_hold_fire()
@@ -3030,6 +3032,11 @@ local function build_menu()
     EspGroup:AddToggle("ESPEnabled", {
         Text = "ESP",
         Default = false,
+    }):AddKeyPicker("ESPKey", {
+        Default = "None",
+        Mode = "Toggle",
+        Modes = {"Toggle", "Hold", "Always"},
+        Text = "ESP",
     })
 
     EspGroup:AddToggle("ESPBox", {Text = "Box", Default = true})
@@ -3560,6 +3567,11 @@ local function build_menu()
     bind("InstantPickup", function(value) config.instant_pickup = value end)
 
     bind("ESPEnabled", function(value) esp.enabled = value end)
+    Options.ESPKey:OnClick(function(toggled)
+        if Options.ESPKey.Mode == "Toggle" then
+            Toggles.ESPEnabled:SetValue(toggled)
+        end
+    end)
     bind("ESPBox", function(value) esp.box = value end)
     bind("ESPName", function(value) esp.name = value end)
     bind("ESPNameMode", function(value) esp.name_mode = value end)
